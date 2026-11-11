@@ -1,4 +1,4 @@
-//! GLM-5.3-Flash NVFP4 native CUDA at TP over processes (TF_GLM_RANK, NCCL_COMM_ID): rank 0 serves, others follow.
+//! GLM-5.3-Flash NVFP4 native CUDA at TP over processes (--tp, --rank, NCCL's root): rank 0 serves, others follow.
 
 const std = @import("std");
 const cuda = @import("cuda");
@@ -45,6 +45,11 @@ pub const Options = struct {
     drafter: ?[]const u8 = null, // --drafter: DFlash2's folder (the same on every rank; needs drafts on)
     drafter_bits: u8 = 4, // --drafter-bits: 4 (default) or 0 (bf16)
     mtp_confidence: ?f64 = null, // --mtp-confidence: rank 0's lanes stop an MTP chain where its chance falls under it
+    rank: u32 = 0, // the launch's, resolved from --tp/--rank and TF_GLM_* (native/cuda_launch.zig)
+    tp: u32 = 1,
+    master: ?[]const u8 = null,
+    master_port: u16 = 29551,
+    launch_from: []const u8 = "",
 };
 /// --drafter: DFlash2 (incoai/GLM-5.3-Flash-DFlash2, non-commercial weights) drafts instead of the MTP head.
 pub const takes_drafter = true;
@@ -122,32 +127,9 @@ pub fn kvPool(p: *anyopaque) ?kv.Source {
     return .{ .pool = &pages.pool, .page_tokens = @import("cuda_state.zig").page_rows };
 }
 
-/// This rank's place: TF_GLM_RANK of TF_GLM_WORLD (both, or neither for a refusal that names them).
-pub const Place = struct { rank: usize, world: usize };
-
-pub fn place() !Place {
-    const r = std.c.getenv("TF_GLM_RANK") orelse return error.NoRank;
-    const w = std.c.getenv("TF_GLM_WORLD") orelse return error.NoRank;
-    const p: Place = .{ .rank = std.fmt.parseInt(usize, std.mem.span(r), 10) catch return error.NoRank, .world = std.fmt.parseInt(usize, std.mem.span(w), 10) catch return error.NoRank };
-    return checked(p);
-}
-
-/// A place the family serves: a rank inside its world, and at most `ranks.max_world` ranks.
-fn checked(p: Place) !Place {
-    if (p.world < 1 or p.rank >= p.world) return error.NoRank;
-    if (p.world > ranks.max_world) return error.TooManyRanks;
-    return p;
-}
-
-/// Bytes this rank's weights take at most, for the server's admission: the checkpoint times its largest axis share.
-pub fn weightShare(a: std.mem.Allocator, io: std.Io, dir: []const u8, total: u64) u64 {
-    const p = place() catch return total;
-    const path = std.fs.path.join(a, &.{ dir, "config.json" }) catch return total;
-    const text = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 24)) catch return total;
-    const c = config.parse(a, text) catch return total;
-    const f = (shard.Share.of(&c, p.rank, p.world) catch return total).part(&c);
-    return @intCast(@as(u128, total) * f[0] / f[1]);
-}
+const place_mod = @import("cuda_native_place.zig");
+pub const Place = place_mod.Place;
+pub const weightShare = place_mod.weightShare;
 
 /// Slots for `context` plus a verify window, a multiple of 64 so the sparse pool keeps the AOT set.
 pub fn capacity(context: usize) usize {
@@ -188,7 +170,8 @@ const paging = startup.paging;
 pub fn open(gpa: std.mem.Allocator, io: std.Io, ctx: *const cuda.Context, dir: []const u8, kernels: ?[]const u8, o: Options) !Loaded {
     _ = kernels; // our own kernels: a captured set is not used
     try @import("cuda_env.zig").startup();
-    const p = try place();
+    try place_mod.rendezvous(o, place_mod.Process{}, place_mod.Process{}); // NCCL's root, before anything reads it
+    const p = try place_mod.place(o);
     const roce_bytes = try roceBytes(if (std.c.getenv("TF_ROCE_MAX_KB")) |v| std.mem.span(v) else null);
     if (p.world > 1 and std.c.getenv("NCCL_COMM_ID") == null) return error.NoCommId;
     var problem: []const u8 = "";
@@ -196,6 +179,7 @@ pub fn open(gpa: std.mem.Allocator, io: std.Io, ctx: *const cuda.Context, dir: [
         std.log.err("{s}", .{problem});
         return err;
     };
+    ranks.wirePieces(&set, p.world, &ranks.environment);
     try @import("cuda_roce_multi.zig").validate(p.world, p.rank, set.roce_multi);
     set.kv8 = o.kv8;
     if (share_mod.moved(if (std.c.getenv("TF_GLM_KV_SHARE")) |v| std.mem.span(v) else "")) return error.GlmKvShareMoved; // before any rank opens
@@ -322,7 +306,7 @@ fn finishRank(a: OpenArgs) !Loaded {
     errdefer if (own.group.multi) |m| m.deinit(m.ctx);
     own.e.group = &own.group;
     own.e.backend.group = &own.group; // the boundary's gathers take the group's route from here on
-    std.log.info("[tensorfold] glm: rank {d} of {d} sums through the {t} collective (RoCE gathers {s})", .{ p.rank, p.world, own.e.collective.kind(), if (own.group.fast != null or own.group.multi != null) "on" else "off" });
+    std.log.info("[tensorfold] glm: rank {d} of {d} ({s}) sums through the {t} collective (RoCE gathers {s})", .{ p.rank, p.world, o.launch_from, own.e.collective.kind(), if (own.group.fast != null or own.group.multi != null) "on" else "off" });
     own.link = try follow.Link.init(gpa, ctx.d, &own.group.lib, own.group.comm, own.e.stream, try linkCapacity(cap, o.vision));
     errdefer own.link.deinit();
     own.e.snap_setup = .{ .ptr = own, .run = readySnapshots };
@@ -500,8 +484,9 @@ fn release(own: *Owned) void {
 pub fn explain(_: ?*anyopaque, err: anyerror) ?[]const u8 {
     return switch (err) {
         error.BadRoceCap => "TF_ROCE_MAX_KB: give an integer from 1 through 4194303 KiB, or unset it for 4096 KiB",
-        error.NoRank => "GLM-5.3-Flash runs at TP over hosts: set TF_GLM_RANK and TF_GLM_WORLD on every host (WORLD 1: one GPU, with TF_GLM_LAYERS for a thin model)",
-        error.NoCommId => "GLM-5.3-Flash's ranks meet over NCCL: with TF_GLM_WORLD 2 or more, set NCCL_COMM_ID to rank 0's address:port on every host",
+        error.NoRank => "GLM-5.3-Flash runs at TP over hosts: launch every host with --tp and a --rank below it (--tp 1: one GPU, with TF_GLM_LAYERS for a thin model)",
+        error.NoCommId => "GLM-5.3-Flash's ranks meet over NCCL: above one rank, give --master (rank 0's address) or set NCCL_COMM_ID to rank 0's address:port on every host",
+        error.RendezvousDisagree => "NCCL_COMM_ID differs from --master:--master-port: give one of them, or equal values",
         error.RankMismatch => "the ranks' settings differ (each rank's log names the one): start them alike",
         error.Fp8OnPages => "--kv-cache fp8 keeps a window per stream: unset TF_KV_PAGES, or set it to auto or off",
         error.BadKvShare => "TF_KV_SHARE: give how many states the prompt store over the KV pages keeps, or 0 or unset for off",
@@ -512,7 +497,7 @@ pub fn explain(_: ?*anyopaque, err: anyerror) ?[]const u8 {
         error.InvalidEnvironment => "a TF_GLM_* setting is malformed: the error line before this one names it, its value and the accepted form",
         error.GlmKvHostNeedsPages => "TF_GLM_KV_HOST keeps the KV pool's pages in host memory: set TF_KV_PAGES=on (and --kv-cache bf16) as well",
         error.TooManyRanks => std.fmt.comptimePrint(
-            "GLM-5.3-Flash on CUDA runs on at most {d} ranks: set TF_GLM_WORLD to {d} or fewer",
+            "GLM-5.3-Flash on CUDA runs on at most {d} ranks: launch with --tp {d} or fewer",
             .{ ranks.max_world, ranks.max_world },
         ),
         error.NotModelOpt, error.UnsupportedQuant => "GLM-5.3-Flash on CUDA reads ModelOpt NVFP4 and MIXED_PRECISION checkpoints (the log names what config.json has)",
@@ -521,11 +506,8 @@ pub fn explain(_: ?*anyopaque, err: anyerror) ?[]const u8 {
     };
 }
 
-test "a place inside its world of at most 16 ranks serves; a larger world is refused by name" {
-    try std.testing.expectEqual(Place{ .rank = 15, .world = 16 }, try checked(.{ .rank = 15, .world = 16 }));
-    try std.testing.expectError(error.TooManyRanks, checked(.{ .rank = 0, .world = 17 }));
-    try std.testing.expectError(error.NoRank, checked(.{ .rank = 2, .world = 2 }));
-    try std.testing.expect(explain(null, error.TooManyRanks) != null);
+test {
+    _ = place_mod;
 }
 
 test "a checkpoint refused for its format, at the entry or by the loader, is explained" {
