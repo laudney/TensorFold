@@ -17,7 +17,10 @@ already releases `glm_mm`'s existing dependent launches sooner, so splitting the
   included (`RMSNORM`, `TF_GLM_SWIGLU_512/64`, `TF_GLM_DEC_TILE`, the other macro-defined kernels the scan finds).
   Only `glm_mm.cu`'s matmul bodies (the `glm_mm{B}_{16,32,64,128}` and prompt entries, which call `grid_launch()`,
   load weights, then `grid_wait()`) are a named exception; `glm_mm_reduce` (today: a trigger, no wait) and the
-  load-time tilers (`glm_mm_tile*`) get `glm_pdl::enter()` like every other kernel.
+  load-time tilers (`glm_mm_tile*`) open with the wait too. Kernels that write weights (the four `glm_mm_tile*` and
+  `glm_quant`'s three quantizers) open with `glm_pdl::enter_weights()`: the wait without the early trigger, so a
+  weight-first reader (qmmf, `glm_mm`) behind one can never start before its weights are whole. The scan holds their
+  names and refuses `enter()` there.
 - Scan test: `zig/build/glm_pdl_scan.zig` adds `test-glm-pdl-scan` (listed in `host_ci.zig` with the other host
   steps). At build time it lists `zig/kernels/cuda/glm_*.cu` and `glm_*.cuh` and copies them, with
   `zig/tests/glm_pdl_scan.zig` as `main.zig`, into a write-files directory, the way `gradient_host.zig` does; the test
@@ -29,8 +32,9 @@ already releases `glm_mm`'s existing dependent launches sooner, so splitting the
 - Re-pin `zig/tests/fixtures/gradient-serving.tsv` for each changed pinned file (`glm_glue*.cuh`, `glm_glue.cu`,
   `glm_kda.cu`, `glm_ops.cu`, `glm_quant.cu`, `glm_triton.cuh` if touched), the note naming this change.
 - Kernel contract: rebuild the GLM images with nvcc 13.0 and 13.3; every kernel whose registers or static shared
-  bytes moved gets its records re-measured (`glm_cuda_records.zig`, `measurements/pending_133.zig`,
-  `nvcc_133_records.zig` as they hold it); `zig build test-kernel-contract` and the limits audit clean.
+  bytes moved gets its records re-measured. Measured: under 13.0 every GLM record stays current; under 13.3
+  `tf_glm_chunks_16` and `_32` and `df_sumn` move, recorded in `glm_cuda_records.zig`'s `cuda_133` (a commit of its
+  own after commit 2, data only).
 
 Launch side (same commit):
 
@@ -91,16 +95,18 @@ Launch side (same commit):
 - `zig/tests/cuda/glm_pdl_order.zig`, `tf-cuda-test glm-pdl-order` (sm_90+ only; skips cleanly below):
   - Control: poison `in`, slow write, early read launched dependent; up to 8 tries; a try with `seen == poison` must
     give `out != reference`; no such try fails with "overlap not exercised".
-  - For each kernel under test, one or more from every GLM image (`glm_glue`: `tf_glm_hc_post`,
-    `tf_glm_rmsnorm_4096_f32w`, a multi-wave `tf_glm_router_tile`; `glm_kda`: `tf_glm_kda_out` through the shared
-    launcher; `glm_ops`: `tf_glm_put_slot`; `glm_index`: a scores kernel; `glm_quant`: `tf_glm_nvfp4_quantize`;
-    `glm_dflash`: `df_swiglu`; `glm_vision`: one `glm_vis_` kernel; `glm_mm`: the decode tile and `glm_mm_reduce`;
-    qmmf: the 16-row decode instance plain and cluster, a K=64 short slice, and `reduce_kernel`): its input buffer
-    starts poisoned, the slow writer fills it, the kernel launches dependent through the production launcher
-    (`cuda_pdl.launch`, the KDA launcher, `Lane.matmulOut` with `pdl`), and its output bytes must equal the same
-    launch made plain after a synchronize.
-  - Byte equality to main: `--base-images DIR` loads main's fatbins (the same images built from the base tree) by
-    path and runs every kernel under test on the same inputs plain; each output must equal the head's bytes.
+  - The mechanism: `tf_probe_pdl_enter_read` opens with `glm_pdl::enter()` (the exact entry every GLM kernel has).
+  - Kernels under test, one from each GLM image with a small argument set, plus the weight-first qmmf: `glm_vision`
+    `glm_vis_to_bf16`, `glm_ops` `tf_glm_copy_rows` (8,192 CTAs: many waves), `glm_glue`
+    `tf_glm_rmsnorm_4096_f32w`, `glm_quant` `tf_glm_nvfp4_amax` (a weight writer), `glm_dflash` `df_swiglu`,
+    `glm_mm` `glm_mm_reduce`; qmmf through `Lane.matmulOut`: a decode row's 4 K slices and their reduce, a cluster of
+    4, and a one-group K. The KDA and index kernels open with the same entry (the scan proves it) but need large
+    argument sets, so they are covered by the served exactness runs instead. Each input buffer starts poisoned, the
+    slow writer fills it, the kernel launches dependent through the production launcher (`cuda_pdl.launch`,
+    `Lane.matmulOut` with `pdl`), and its output bytes must equal the same launch made plain after a synchronize.
+  - Byte equality to main: an optional `MAIN_FATBINS` argument loads main's fatbins by path (built by the same nvcc
+    as the runner; the qmmf lane's functions re-found by symbol) and runs each kernel plain on the same input; its
+    bytes must equal the head's.
   - A chain: dependent, plain, host copy, event wait, dependent, ending in the same bytes as all-plain.
 - Wired next to the other `tf-cuda-test` subcommands in `zig/tests/cuda/main.zig` (one dispatch line; the file
   stays within 600 lines).
