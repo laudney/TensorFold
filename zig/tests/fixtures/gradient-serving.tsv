@@ -22,7 +22,7 @@ zig/kernels/cuda/glm_glue_attn.cuh	a8c16ed0c54130689d19386de84217aac232c007effaf
 zig/kernels/cuda/glm_glue_bmm.cuh	6077ea47fc9f462f072a973d44ef4cab711526a3f374cfeb91f1cd65f5fad8f9	raw	dependent launches: each kernel opens with glm_pdl::enter() (glm_pdl.cuh)
 zig/kernels/cuda/glm_glue_hc.cuh	0fc7a68598eb22884edf28d39d051399e85e2e3e13fd45953c8d3faf5defd3b8	raw	dependent launches: each kernel opens with glm_pdl::enter() (glm_pdl.cuh)
 zig/kernels/cuda/glm_glue_index.cuh	ed61d03673005220aeebc43a1da5e5701566fcd5e89fee5d21d3830b20cf73ec	raw	dependent launches: each kernel opens with glm_pdl::enter() (glm_pdl.cuh)
-zig/kernels/cuda/glm_glue_latent.cuh	67964ea6596deae54f52a8a365850c3a19dab75160cb9582d7bbeaff5d896f5a	raw	dependent launches: each kernel opens with glm_pdl::enter() (glm_pdl.cuh)
+zig/kernels/cuda/glm_glue_latent.cuh	492c846a17ce91a77f6ece56df992a3d2a72c273150ed4905921404965f8b79d	raw	dependent launches: each kernel opens with glm_pdl::enter() (glm_pdl.cuh)
 zig/kernels/cuda/glm_glue_moe.cuh	474148b5bf8f6d4d83a4a205ae90d0d347f2a40f1f8093fe1b2508282d0d86b7	raw	dependent launches: each kernel opens with glm_pdl::enter() (glm_pdl.cuh)
 zig/kernels/cuda/glm_glue_norm.cuh	a3664d9833c17ff4718b7342c529ddd7fa958cbc51a8ffac9b7fab508afbcf92	raw	dependent launches: each kernel opens with glm_pdl::enter() (glm_pdl.cuh)
 zig/kernels/cuda/glm_glue_router.cuh	99911df38e6ad2826491b3fa5efd47aea5e54eebb7cd83eed586ba0dd9305658	raw
