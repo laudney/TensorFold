@@ -108,6 +108,30 @@ pub fn launch(f: Function, cfg: Config, stream: Stream, args: *Args) Error!void 
     try launched(f, cfg, d.api.cuLaunchKernelEx(&lc, f.handle, args.pointers(), null), "cuLaunchKernelEx");
 }
 
+/// Clusters of `cfg`'s shape resident at once (cuOccupancyMaxActiveClusters), or null when unknown.
+pub fn activeClusters(f: Function, cfg: Config) ?u32 {
+    const c = cfg.cluster orelse return null;
+    const get = f.d.max_clusters orelse return null;
+    const one: Config = .{ .grid = c, .block = cfg.block, .shared = cfg.shared, .cluster = c, .cluster_spread = cfg.cluster_spread };
+    var attrs: [4]abi.LaunchAttribute = undefined;
+    const n = fillAttributes(one, &attrs);
+    const lc: abi.LaunchConfig = .{
+        .grid_x = c.x,
+        .grid_y = c.y,
+        .grid_z = c.z,
+        .block_x = cfg.block.x,
+        .block_y = cfg.block.y,
+        .block_z = cfg.block.z,
+        .shared_bytes = cfg.shared,
+        .stream = null,
+        .attrs = &attrs,
+        .num_attrs = @intCast(n),
+    };
+    var out: c_int = 0;
+    if (get(&out, f.handle, &lc) != abi.success or out <= 0) return null;
+    return @intCast(out);
+}
+
 /// A launch's result; a failure names the kernel and its configuration with the code.
 fn launched(f: Function, cfg: Config, res: abi.Result, what: []const u8) Error!void {
     if (res == abi.success) return;
@@ -166,6 +190,35 @@ fn fillAttributes(cfg: Config, out: *[4]abi.LaunchAttribute) usize {
         }
     }
     return n;
+}
+
+test "active clusters: the query sees one cluster's grid, block, shared bytes and cluster; unknown is null" {
+    const Q = struct {
+        var seen: abi.LaunchConfig = undefined;
+        var cluster_z: c_uint = 0;
+        var answer: c_int = 12;
+        fn query(out: *c_int, _: abi.Function, lc: *const abi.LaunchConfig) callconv(.c) abi.Result {
+            seen = lc.*;
+            cluster_z = lc.attrs.?[0].value.cluster_dim.z;
+            out.* = answer;
+            return if (answer < 0) 1 else abi.success;
+        }
+    };
+    var d: driver.Driver = undefined;
+    d.max_clusters = Q.query;
+    const f: Function = .{ .d = &d, .handle = null };
+    const cfg: Config = .{ .grid = .{ .x = 32, .y = 1, .z = 8 }, .block = .{ .x = 128 }, .shared = 25600, .cluster = .{ .x = 1, .y = 1, .z = 8 } };
+    try std.testing.expectEqual(@as(?u32, 12), activeClusters(f, cfg));
+    try std.testing.expectEqual(@as(c_uint, 8), Q.seen.grid_z);
+    try std.testing.expectEqual(@as(c_uint, 1), Q.seen.grid_x);
+    try std.testing.expectEqual(@as(c_uint, 128), Q.seen.block_x);
+    try std.testing.expectEqual(@as(c_uint, 25600), Q.seen.shared_bytes);
+    try std.testing.expectEqual(@as(c_uint, 8), Q.cluster_z);
+    try std.testing.expectEqual(@as(?u32, null), activeClusters(f, .{ .grid = cfg.grid, .block = cfg.block }));
+    Q.answer = -1;
+    try std.testing.expectEqual(@as(?u32, null), activeClusters(f, cfg));
+    d.max_clusters = null;
+    try std.testing.expectEqual(@as(?u32, null), activeClusters(f, cfg));
 }
 
 test "args keep C alignment and sizes" {
