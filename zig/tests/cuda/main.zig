@@ -100,7 +100,6 @@ const flashnext_nvfp4_tp_tests = @import("flashnext_nvfp4_tp_tests.zig");
 const flashnext_fp8_experts_tests = @import("flashnext_fp8_experts_tests.zig");
 const nvfp4_fact_tests = @import("nvfp4_fact_tests.zig");
 const nvfp4_b32_tests = @import("nvfp4_b32_tests.zig");
-const lane_half_tests = @import("lane_half_tests.zig");
 const flashnext_dense_hc_tests = @import("flashnext_dense_hc_tests.zig");
 const flashnext_hc_tests = @import("flashnext_hc_tests.zig");
 const flashnext_attn_tests = @import("flashnext_attn_tests.zig");
@@ -388,7 +387,8 @@ fn run(gpu: check.Gpu, cmd: []const u8, rest: []const [:0]const u8) !void {
     if (std.mem.eql(u8, cmd, "qmmf-prompt-contract")) return @import("contract_qmmf_prompt.zig").run(gpu);
     if (std.mem.eql(u8, cmd, "qmmf-prompt-repro")) return @import("qmmf_prompt_tests.zig").repro(gpu);
     if (std.mem.eql(u8, cmd, "qmmf-prompt-bench")) return @import("qmmf_prompt_tests.zig").bench(gpu);
-    if (std.mem.eql(u8, cmd, "lane-half")) return lane_half_tests.run(gpu);
+    if (std.mem.eql(u8, cmd, "lane-half")) return @import("lane_half_tests.zig").run(gpu);
+    if (std.mem.eql(u8, cmd, "qmmf-cluster-equal")) return @import("qmmf_cluster_equal.zig").run(gpu);
     if (std.mem.eql(u8, cmd, "flashnext-dense-hc")) return flashnext_dense_hc_tests.run(gpu);
     if (std.mem.eql(u8, cmd, "flashnext-hc")) return flashnext_hc_tests.run(gpu);
     if (std.mem.eql(u8, cmd, "flashnext-attn")) return flashnext_attn_tests.run(gpu);
