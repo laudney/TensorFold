@@ -79,8 +79,7 @@ test "proposal rows: qlinear packs exact selected BF16 bits and full view launch
     try t.expectEqualSlices(u16, &expected, tiled.words);
     var d: Driver = undefined;
     d.api.cuLaunchKernel = Trace.launch;
-    var lane: qmmf.Lane = undefined;
-    lane.clusters = false;
+    var lane = qmmf.Lane.mock(false);
     for (&lane.fns) |*set| {
         for (set, 0..) |*f, i| f.* = Trace.function(&d, i + 1);
     }

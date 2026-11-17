@@ -126,6 +126,7 @@ test {
     _ = segments;
     _ = @import("qmmf.zig");
     _ = @import("qmmf_shared.zig");
+    _ = @import("qmmf_fit.zig");
     _ = @import("fp8.zig");
     _ = @import("mxfp8.zig");
     _ = carveout;

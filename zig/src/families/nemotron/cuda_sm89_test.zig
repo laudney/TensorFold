@@ -59,8 +59,7 @@ const Fake = struct {
         return d;
     }
     fn lane(d: *const cuda.Driver, cluster: bool) qmmf.Lane {
-        var l: qmmf.Lane = undefined;
-        l.clusters = cluster;
+        var l = qmmf.Lane.mock(cluster);
         l.mod = .{ .d = d, .handle = @ptrFromInt(1) };
         for (&l.fns, 0..) |*set, mi| for (set, 0..) |*f, i| {
             f.* = .{ .d = d, .handle = @ptrFromInt(10 + mi * 16 + i) };

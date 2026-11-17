@@ -132,7 +132,7 @@ pub const Fake = struct {
 const tiny: Geometry = .{ .hidden = 256, .layers = 2, .heads = 4, .kv_heads = 2, .head_dim = 64, .vocab = 512, .eps = 1e-6, .context = 4096, .acc = 512, .wide = 1024, .mid = 512, .theta = 1e4 };
 
 pub fn lane() cuda.qmmf.Lane {
-    var l: cuda.qmmf.Lane = undefined;
+    var l = cuda.qmmf.Lane.mock(false);
     l.clusters = false; // partBytes reads the tile plan alone
     return l;
 }

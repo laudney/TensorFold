@@ -159,7 +159,7 @@ test "Shared down registrations cover four exact geometries and replacement hook
         try std.testing.expectEqual(@as(u32, 128), record.launch.threads);
         try std.testing.expect(!record.geometry_pending);
     }
-    var lane: cuda.qmmf.Lane = undefined;
+    var lane = cuda.qmmf.Lane.mock(false);
     for (0..4) |i| {
         var p: @import("contract_qmmf_shared.zig").Product = .{ .rig = undefined, .lane = &lane, .index = i };
         const kernel = p.kernel();

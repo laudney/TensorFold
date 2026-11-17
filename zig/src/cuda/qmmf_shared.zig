@@ -50,9 +50,7 @@ test "shared down stride: geometry, output address and stride match the contiguo
     };
     var d: @import("driver.zig").Driver = undefined;
     d.api.cuLaunchKernel = Mock.run;
-    var l: q.Lane = undefined;
-    l.clusters = true;
-    l.half_below = 96;
+    var l = q.Lane.mock(true);
     for (&l.shared_down, 0..) |*f, i| f.* = .{ .d = &d, .handle = @ptrFromInt(101 + i) };
     const s: Stream = .{ .d = &d, .handle = null };
     const w: q.Weight = .{ .mode = .bf16, .codes = 11, .scales = 0, .n = 2560, .k = 640, .npad = 2560 };

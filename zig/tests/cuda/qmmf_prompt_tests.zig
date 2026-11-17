@@ -366,8 +366,7 @@ pub fn bench(gpu: check.Gpu) !void {
 test "qmmf prompt scratch fixture uses usize before multiplication and covers every split row count" {
     try std.testing.expectEqual(@as(usize, 17_139_200), fixturePartBytes(65, 8240));
     try std.testing.expectEqual(@as(usize, 67_238_400), fixturePartBytes(4218, 8240));
-    var lane: q.Lane = undefined;
-    lane.clusters = false;
+    var lane = q.Lane.mock(false);
     for (normal) |shape| {
         const n = shape.n;
         const w = try q.pinned(cuda.modelopt.bf16Weight(0, n, shape.k), q.splitK(n, shape.k));
@@ -385,8 +384,7 @@ test "qmmf prompt scratch keeps the current normal weights and bounds all-logit 
     const final = cuda.modelopt.bf16Weight(0, 320, 10240);
     try std.testing.expectEqual(@as(u32, 384), final.npad);
     try std.testing.expect(q.promptEligible(512, final));
-    var lane: q.Lane = undefined;
-    lane.clusters = false;
+    var lane = q.Lane.mock(false);
     for (all_logits) |projection| {
         const w = cuda.modelopt.bf16Weight(0, projection.n, projection.k);
         if (projection.n >= 124160) try std.testing.expectEqual(q.Out.bf16, projection.out);
@@ -478,8 +476,7 @@ test "qmmf prompt scratch production envelope covers TP1 and TP2 through the chu
         .{ 320, 2560, 0 },    .{ 2560, 640, 0 },   .{ 2560, 320, 0 },   .{ 248320, 2560, 0 },
         .{ 124160, 2560, 0 }, .{ 79591, 2560, 0 },
     };
-    var lane: q.Lane = undefined;
-    lane.clusters = false;
+    var lane = q.Lane.mock(false);
     for (weights) |shape| {
         const w: q.Weight = .{ .mode = .bf16, .codes = 0, .scales = 0, .n = shape[0], .k = shape[1], .npad = (shape[0] + 127) / 128 * 128, .sk = shape[2] };
         for (1..chunk_cap + 1) |m| {

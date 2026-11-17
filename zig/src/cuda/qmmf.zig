@@ -1,5 +1,6 @@
 //! The lane matmul (qmmf.cu) for FP4, FP8, MXFP8, FP8G and BF16 weights, with its kernel, tile and slices.
 const std = @import("std");
+const fit_mod = @import("qmmf_fit.zig");
 const driver = @import("driver.zig");
 const module = @import("module.zig");
 const launch_ = @import("launch.zig");
@@ -14,15 +15,15 @@ const Stream = stream_.Stream;
 
 pub const group = 64; // inputs a kernel stage reads
 pub const fused_rows = 256; // rows from which a projection's K slices meet in one block (linear.py FUSED_ROWS)
-const bn = 64;
-const threads = 128; // WM 1 x WN 4 warps
+pub const bn = 64;
+pub const threads = 128; // WM 1 x WN 4 warps
 
 /// The packed formats (qmmf.cu Mode): FP4 with e4m3 scales a 16, e4m3 with one scale or fp32 a 64, and bf16.
 pub const Mode = enum(u3) { fp4 = 0, fp8 = 1, mxfp8 = 2, fp8g = 3, bf16 = 4 };
 
-const modes = [_]Mode{ .fp4, .fp8, .mxfp8, .fp8g, .bf16 };
+pub const modes = [_]Mode{ .fp4, .fp8, .mxfp8, .fp8g, .bf16 };
 
-fn modeIndex(mode: Mode) usize {
+pub fn modeIndex(mode: Mode) usize {
     return std.mem.indexOfScalar(Mode, &modes, mode).?;
 }
 
@@ -136,7 +137,7 @@ pub const reduce_symbols = [2][:0]const u8{
     "_ZN7tf_qmmf13reduce_kernelILb0EEEvPKfPvxif",
     "_ZN7tf_qmmf13reduce_kernelILb1EEEvPKfPvxif",
 };
-const row_tiles = [_]u32{ 16, 32, 64 };
+pub const row_tiles = [_]u32{ 16, 32, 64 };
 
 /// What a call writes: bf16 rows, or the fp32 sums unrounded (a tensor-parallel rank's partial rows).
 pub const Out = enum { bf16, f32 };
@@ -177,6 +178,9 @@ pub fn promptEligible(m: usize, w: Weight) bool {
         (w.k >= 512 or (w.n == 10240 and w.k == 320)) and w.npad % 128 == 0;
 }
 
+pub const Fit = fit_mod.Fit;
+pub const Shape = fit_mod.Shape;
+
 pub const Lane = struct {
     mod: Module,
     fns: [modes.len][7]Function, // per mode: lane16, lane16c, lane32, lane32c, lane64, lane64c, fused
@@ -189,6 +193,7 @@ pub const Lane = struct {
     prompt_k32: ?[2]Function = null, // Out; unsplit BF16 prompt calls, loadPrompt() fills it on sm_12x
     prompt_sms: usize = 0, // the device's SMs: the tile runs when its blocks fill more than half of them
     clusters: bool, // sm_90 on: slices meet in a cluster's shared memory
+    fit: Fit = std.mem.zeroes(Fit), // where clusters meet only when the whole grid is resident (Lane.load fills it)
 
     pub fn load(d: *const Driver, capability_major: u32) !Lane {
         if (!kernels.available) return error.BuiltWithoutKernels;
@@ -217,8 +222,13 @@ pub const Lane = struct {
             try f.allowDynamicShared(sharedBytes(.bf16, 64));
         }
         l.half_below = try halfBelow();
+        if (l.clusters) l.fit = fit_mod.measureFit(&l);
         return l;
     }
+
+    pub const shape = fit_mod.shape;
+    pub const maxPartBytes = fit_mod.maxPartBytes;
+    pub const mock = fit_mod.mock;
 
     /// The BF16 prompt tile on the current device if it is sm_12x; only families that timed their shapes call this.
     pub fn loadPrompt(l: *Lane, d: *const Driver) !void {
@@ -250,7 +260,7 @@ pub const Lane = struct {
 
     /// Slice partials a call needs (fp32 [sk][m][n]) when it reduces them, else 0.
     pub fn partBytes(l: Lane, m: usize, w: Weight) usize {
-        const p = planFor(m, w, l.clusters);
+        const p = l.shape(m, w).plan;
         return if (p.reduce) @as(usize, p.sk) * m * w.n * 4 else 0;
     }
 
@@ -268,14 +278,15 @@ pub const Lane = struct {
 
     /// The actual prompt selection: loaded tiles, the pinned slice plan, and blocks over half the SMs.
     pub fn usesPrompt(l: Lane, m: usize, w: Weight) bool {
-        const p = planFor(m, w, l.clusters);
+        const p = l.shape(m, w).plan;
         return promptEligible(m, w) and !p.cluster and !p.reduce and l.prompt != null and
             2 * promptBlocks(m, w.n) > l.prompt_sms;
     }
 
     /// matmul() writing y as `out` says: bf16, or fp32.
     pub fn matmulOut(l: Lane, s: Stream, x: u64, ldx: usize, m: usize, w: Weight, y: u64, out: Out, part: u64) !void {
-        const p = planFor(m, w, l.clusters);
+        const sh = l.shape(m, w);
+        const p = sh.plan;
         if (p.reduce and part == 0) return error.MissingLanePart;
         const set = (if (out == .f32) l.f32_fns else l.fns)[modeIndex(w.mode)];
         const ti: usize = if (p.bm == 16) 0 else if (p.bm == 32) 1 else 2;
@@ -284,7 +295,7 @@ pub const Lane = struct {
         const bm: usize = if (prompt) 128 else p.bm;
         const rows_t = (m + bm - 1) / bm;
         const hm = halfModeIndex(w.mode);
-        const half = hm != null and p.bm == 16 and !p.fused and rows_t * ((w.n + bn - 1) / bn) * p.sk < l.half_below;
+        const half = !prompt and sh.half;
         const f = if (k32) l.prompt_k32.?[@backingInt(out)] else if (prompt) l.prompt.?[@backingInt(out)][@intFromBool(p.fused)] else if (half) l.half[hm.?][@backingInt(out)][@intFromBool(p.cluster)] else if (p.fused) set[6] else set[ti * 2 + @intFromBool(p.cluster)];
         const cols: usize = if (prompt) 128 else if (half) 32 else bn;
         const band = @max(1, @min(rows_t, (12 << 20) / (bm * w.k * 2)));
