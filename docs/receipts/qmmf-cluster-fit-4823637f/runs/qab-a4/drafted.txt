@@ -1,0 +1,3 @@
+3.505 s {'prompt_tokens': 10, 'completion_tokens': 128, 'total_tokens': 138, 'prompt_tokens_details': {'cached_tokens': 0}, 'completion_tokens_details': {'reasoning_tokens': 0}}
+3.601 s {'prompt_tokens': 10, 'completion_tokens': 128, 'total_tokens': 138, 'prompt_tokens_details': {'cached_tokens': 0}, 'completion_tokens_details': {'reasoning_tokens': 0}}
+3.439 s {'prompt_tokens': 10, 'completion_tokens': 128, 'total_tokens': 138, 'prompt_tokens_details': {'cached_tokens': 0}, 'completion_tokens_details': {'reasoning_tokens': 0}}

@@ -1,0 +1,3 @@
+qcfbase info: glm: windows (timed): 41.15 ms at 1 row, 62.86 at 4, 180.26 at 32, a draft 1.99 ms; experts classic
+qcf info: glm: windows (timed): 40.75 ms at 1 row, 62.34 at 4, 180.20 at 32, a draft 2.07 ms; experts classic
+ALLDONE

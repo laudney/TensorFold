@@ -1,0 +1,9 @@
+qab-a1 qcfbase plain 5.391 5.393 5.399 5.408 5.425  drafted 3.490 3.554 3.388  shas bd5e5ca12ac6  long a7ecc532c706 experts classic
+qab-b1 qcf plain 5.345 5.354 5.631 5.349 5.324  drafted 3.376 3.309 3.321  shas bd5e5ca12ac6  long a7ecc532c706 experts classic
+qab-b2 qcf plain 5.342 5.339 5.335 5.346 5.339  drafted 3.485 3.469 3.482  shas bd5e5ca12ac6  long a7ecc532c706 experts classic
+qab-a2 qcfbase plain 5.401 5.500 5.581 5.412 5.417  drafted 3.380 3.395 3.466  shas bd5e5ca12ac6  long a7ecc532c706 experts classic
+qab-a3 qcfbase plain 5.412 5.502 5.424 5.671 5.413  drafted 3.489 3.529 3.502  shas bd5e5ca12ac6  long a7ecc532c706 experts classic
+qab-b3 qcf plain 5.336 5.343 5.337 5.355 5.353  drafted 3.506 3.499 3.353  shas bd5e5ca12ac6  long a7ecc532c706 experts classic
+qab-b4 qcf plain 5.351 5.483 5.357 5.376 5.367  drafted 3.427 3.479 3.305  shas bd5e5ca12ac6  long a7ecc532c706 experts classic
+qab-a4 qcfbase plain 5.462 5.432 5.441 5.425 5.447  drafted 3.505 3.601 3.439  shas bd5e5ca12ac6  long a7ecc532c706 experts classic
+ALLDONE
