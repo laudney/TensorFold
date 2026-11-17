@@ -8,7 +8,7 @@ const att_rows = @import("cuda_batch_state.zig").att_rows;
 /// head_local's rows on one GPU: the draft head's lanes (<= 16) times its ids; a split head needs a pass's rows.
 pub const head_rows_one: usize = 32;
 
-/// head_local's rows, and whether the lane reduces K slices through native_part (with clusters it never does).
+/// head_local's rows, and whether the lane reduces K slices through native_part (where its clusters do not fit).
 pub const Sizes = struct { head_rows: usize = head_rows_one, lane_reduce: bool = true };
 
 /// hc_part's rows of (low + 4) floats: hc_sk slices below 64 rows (legacy kernel), <= 8 below 256 (lane), one beyond.

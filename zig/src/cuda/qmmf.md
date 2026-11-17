@@ -127,3 +127,19 @@ also reduce load instructions. These are reasons to test a 1.6x speedup,
 not a measured result. Register pressure, the three-stage shared-memory
 allocation and hardware MMA throughput can limit the gain. Device byte
 checks, timings and compile-limit receipts remain required before landing.
+
+# Clusters only where they fit
+
+On sm_90 and newer a split's K slices meet in a cluster of `sk` CTAs only while
+every cluster of the launch is resident at once. `Lane.load` asks the driver
+(`cuOccupancyMaxActiveClusters`) how many clusters of each cluster instance and
+size fit; `Lane.shape` compares the grid's clusters with the smaller count of
+the BF16 and FP32 instances and otherwise sends the slices through
+`reduce_kernel`, which adds them in the same order (slice 0 first). An unknown
+count (an older driver, a mock lane) keeps the cluster. On GB10 the 8-slice
+tile fits 12 clusters, so a 2048-column decode weight (32 clusters) reduces.
+
+A split that reduces needs fp32 partials. Their need is not monotonic in the
+row count (a half-tile grid at 1-16 rows can reduce while 17 rows keep the
+cluster), so families size their scratch with `Lane.maxPartBytes(w, rows)`.
+`tf-cuda-test qmmf-cluster-equal` compares both launches byte for byte on GB10.
