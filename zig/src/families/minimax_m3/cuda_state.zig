@@ -158,8 +158,8 @@ pub const Buffers = struct {
         const words = std.math.divCeil(usize, nb, 32) catch unreachable;
         const qkv_rows = (hq + 2 * hk) * c.head_dim + (hi + 1) * c.index_dim;
         var part: usize = 16; // the lane's weights: each layer's indexer, dspark/'s projections
-        for (w.layers) |l| part = @max(part, lane.partBytes(rows, l.attn.index));
-        for (extra) |x| part = @max(part, lane.partBytes(rows, x));
+        for (w.layers) |l| part = @max(part, lane.maxPartBytes(l.attn.index, rows));
+        for (extra) |x| part = @max(part, lane.maxPartBytes(x, rows));
         const sizes = [fields.len]usize{
             rows * 4,                    rows * h * 4,               rows * h * 2,             rows * qkv_rows * 2,                               rows * hq * c.head_dim * 2,
             rows * hi * c.index_dim * 2, rows * hq * c.head_dim * 2, world * rows * 2 * h * 4, rows * 2 * inter * 2,                              rows * inter * 2,

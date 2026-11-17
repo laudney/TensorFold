@@ -377,7 +377,7 @@ pub const Engine = struct {
         }
         // head_local: the draft head's lanes on one GPU, a pass's rows split; native_part only where the lane reduces
         const parts = @import("cuda_batch_state.zig");
-        const z: parts.Sizes = .{ .head_rows = if (e.collective != null) @max(rows, parts.head_rows_one) else parts.head_rows_one, .lane_reduce = !e.batch_k.native_lane.clusters };
+        const z: parts.Sizes = .{ .head_rows = if (e.collective != null) @max(rows, parts.head_rows_one) else parts.head_rows_one, .lane_reduce = true }; // a split may reduce wherever its clusters do not fit (qmmf_fit)
         e.batch_s = try batch.Scratch.alloc(e.gpa, e.driver, e.stream.*, rows, z);
         return &e.batch_s.?;
     }

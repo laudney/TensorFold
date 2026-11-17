@@ -22,9 +22,9 @@ pub const Scratch = struct { tmp: u64, gu: u64, act: u64, xs_act: u64, mm_part: 
 pub const Kernels = struct { set: glue.Set, linear: cuda.qlinear.Linear, copy_rows: cuda.Function };
 
 /// Fp4Linear.__call__ (prefill on a prompt chunk): bf16 out, or fp32 with `wide`; the prompt GEMM needs `ldx` % 8 == 0.
-fn mm(k: Kernels, stream: cuda.Stream, w: cuda.qmmf.Weight, x: u64, ldx: usize, rows: usize, out: u64, wide: bool, prompt: bool) !void {
+fn mm(k: Kernels, stream: cuda.Stream, w: cuda.qmmf.Weight, x: u64, ldx: usize, rows: usize, out: u64, wide: bool, prompt: bool, part: u64) !void {
     const q: cuda.qlinear.Weight = .{ .nvfp4 = w };
-    const in: cuda.qlinear.Rows = .{ .x = x, .ldx = ldx };
+    const in: cuda.qlinear.Rows = .{ .x = x, .ldx = ldx, .part = part };
     if (prompt) {
         std.debug.assert(x % 16 == 0 and (rows == 1 or ldx % 8 == 0));
         return if (wide) k.linear.promptF32(stream, q, in, out, rows) else k.linear.prompt(stream, q, in, out, rows);
@@ -41,7 +41,7 @@ pub fn block(k: Kernels, stream: cuda.Stream, l: Layer, s: Scratch, x: u64, x_st
 /// forward.out_proj's fill for the dense MLP: down of rows lo..hi (s.act) into out [hi - lo][dims] fp32.
 pub fn fill(k: Kernels, stream: cuda.Stream, l: Layer, s: Scratch, lo: usize, hi: usize, prompt: bool, out: u64) !void {
     switch (l.w) {
-        .nvfp4 => |w| try mm(k, stream, w.down, s.act + lo * l.width * 2, l.width, hi - lo, out, true, prompt),
+        .nvfp4 => |w| try mm(k, stream, w.down, s.act + lo * l.width * 2, l.width, hi - lo, out, true, prompt, s.mm_part),
         .bf16 => |w| try b16.matmul(k.set, stream, s.act + lo * l.width * 2, l.width, w.down, out, s.mm_part, hi - lo, l.dims, l.width, true),
         .mxfp8 => |w| try projection.matmul(k.set, stream, .{ .mxfp8 = w.down }, s.act + lo * l.width * 2, l.width, out, s.mm_part, hi - lo, l.dims, l.width, true),
     }
@@ -63,7 +63,7 @@ pub fn body(k: Kernels, stream: cuda.Stream, l: Layer, s: Scratch, x: u64, x_str
     };
     for ([_]cuda.qmmf.Weight{ q.gate, q.up }, 0..) |proj, j| {
         // Fp4Linear(out=a column slice): the rows computed contiguous, then copied into their half of each row
-        try mm(k, stream, proj, x, x_stride, rows, s.tmp, false, prompt);
+        try mm(k, stream, proj, x, x_stride, rows, s.tmp, false, prompt, s.mm_part);
         var a: cuda.Args = .{};
         a.add(s.tmp);
         a.add(@as(c_longlong, @intCast(w * 2)));

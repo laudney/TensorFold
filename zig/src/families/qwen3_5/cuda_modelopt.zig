@@ -272,14 +272,14 @@ pub const Kernels = struct {
         return .{ .lane = &k.lane, .nvfp4_prompt = &k.prompt };
     }
 
-    /// The slice partials every projection of `e` takes below fused_rows (none with clusters).
+    /// The slice partials every projection of `e` takes at any row count below fused_rows.
     pub fn reserveParts(k: *Kernels, e: *const Engine) !void {
         var most: usize = 0;
         const Each = struct {
             fn bytes(lane: cuda.qmmf.Lane, p: Proj) usize {
                 return switch (p) {
                     .ql => |w| switch (w) {
-                        .nvfp4, .fp8, .bf16, .fp8g => |q| lane.partBytes(@min(engine.max_rows, cuda.qmmf.fused_rows - 1), q),
+                        .nvfp4, .fp8, .bf16, .fp8g => |q| lane.maxPartBytes(q, engine.max_rows),
                         else => 0,
                     },
                     else => 0,

@@ -278,11 +278,11 @@ pub const Model = struct {
         const d = c.hidden;
         var part: usize = 0;
         for (m.w.subs) |sub| switch (sub) {
-            .attn => |a| for ([_]cuda.qlinear.Weight{ a.q, a.k, a.v, a.g, a.o }) |q| for (1..round_rows + 1) |rows| {
-                part = @max(part, k.lane.partBytes(rows, q.nvfp4));
+            .attn => |a| for ([_]cuda.qlinear.Weight{ a.q, a.k, a.v, a.g, a.o }) |q| {
+                part = @max(part, k.lane.maxPartBytes(q.nvfp4, r));
             },
-            .mlp => |p| for ([_]cuda.qlinear.Weight{ p.gate, p.up, p.down }) |q| for (1..round_rows + 1) |rows| {
-                part = @max(part, k.lane.partBytes(rows, q.nvfp4));
+            .mlp => |p| for ([_]cuda.qlinear.Weight{ p.gate, p.up, p.down }) |q| {
+                part = @max(part, k.lane.maxPartBytes(q.nvfp4, r));
             },
         };
         const win = @max(WindowAttention.scratchBytes(m.window(true, null), attend_rows), WindowAttention.scratchBytes(m.window(false, null), attend_rows));
