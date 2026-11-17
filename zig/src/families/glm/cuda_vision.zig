@@ -78,12 +78,9 @@ fn plan(ck: *core.Checkpoint, q: Quant) !Plan {
     }
 }
 
-/// The tower holds no lane slice partials: each stored projection must run before any of its bytes upload.
+/// Each stored projection's kernels are loaded before any of its bytes upload (lane partials share `ws`: < 25 MB).
 fn fits(ql: cuda.qlinear.Linear, p: Plan) !void {
-    if (p.format == .mxfp8) {
-        const lane = ql.lane orelse return error.FormatNotLoaded;
-        try projection.fits(lane, cuda.mxfp8.weight(0, 0, p.n, p.k));
-    } else if (ql.nvfp4_prompt == null) return error.FormatNotLoaded;
+    if (if (p.format == .mxfp8) ql.lane == null else ql.nvfp4_prompt == null) return error.FormatNotLoaded;
 }
 
 /// The refusal, by the module's name: what it declares, what it stores and why the tower cannot read it.
@@ -125,6 +122,7 @@ fn launch(r: *const Run, f: cuda.Function, grid: cuda.Dim3, threads: u32, a: *cu
 }
 
 pub const Tower = struct {
+    pub const ws_default: usize = 64 << 20; // cuBLASLt's workspace, and the lane's slice partials between its calls
     gpa: std.mem.Allocator,
     d: *const cuda.Driver,
     lt: cuda.cublaslt.Library,
@@ -145,7 +143,7 @@ pub const Tower = struct {
     inv_freq: cuda.DeviceBuffer,
     linears: std.AutoHashMap(LinKey, cuda.cublaslt.Linear),
     ws: cuda.DeviceBuffer,
-    ws_len: usize = 64 << 20,
+    ws_len: usize = ws_default,
     bytes: u64 = 0,
     staged: ?staging.Stage = null, // TF_GLM_VISION_HOST: the units' copies from host memory into one device slot
     stages: ?[]f32 = null, // checks: the fp32 stream after the patch embedding and after every block, read back
@@ -287,7 +285,7 @@ pub const Tower = struct {
             .bf16 => |p| return t.linear(ru, x, p, d, m, n, kk, f32_out),
             .q => |q| {
                 if (q.outputs() != n or q.inputs() != kk) return error.BadVisionShape;
-                const in: cuda.qlinear.Rows = .{ .x = x, .ldx = @intCast(kk) };
+                const in: cuda.qlinear.Rows = .{ .x = x, .ldx = @intCast(kk), .part = t.ws.ptr }; // the stream orders ws's uses
                 const rows: usize = @intCast(m);
                 return if (f32_out) t.ql.promptF32(ru.stream, q, in, d, rows) else t.ql.prompt(ru.stream, q, in, d, rows);
             },
@@ -587,11 +585,10 @@ test "vision quantized projections reject either mismatched axis before a launch
     try std.testing.expectError(error.BadVisionShape, tower.project(&run, 0, w, 0, 1, 128, 128, true));
 }
 
-test "vision MXFP8 refuses a lane requiring unowned slice partials before upload" {
-    var lane = cuda.qmmf.Lane.mock(false);
+test "vision MXFP8 needs its lane loaded, and its partials fit the cuBLASLt workspace on any GPU" {
+    var lane = cuda.qmmf.Lane.mock(false); // no clusters: every split reduces through partials
     const p: Plan = .{ .module = "model.visual.blocks.0.attn.qkv", .format = .mxfp8, .n = 3072, .k = 1024, .codes = 0, .scales = 0 };
-    try std.testing.expectError(error.SlicePartialsNotHeld, fits(.{ .lane = &lane }, p));
-    lane.clusters = true;
     try fits(.{ .lane = &lane }, p);
+    try std.testing.expect(lane.maxPartBytes(cuda.mxfp8.weight(0, 0, p.n, p.k), 1 << 20) <= Tower.ws_default);
     try std.testing.expectError(error.FormatNotLoaded, fits(.{}, p));
 }

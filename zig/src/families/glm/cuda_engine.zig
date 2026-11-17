@@ -197,17 +197,17 @@ pub const Engine = struct {
             e.free(0);
             e.seqs.deinit(gpa);
         }
-        e.bp = try fw.Buffers.init(d, &e.w, prompt_solo.bufferRows(o.settings.solo), true, o.capacity);
+        e.bp = try fw.Buffers.init(d, &e.w, e.m.tools().lane, prompt_solo.bufferRows(o.settings.solo), true, o.capacity);
         errdefer e.bp.deinit();
         if (o.settings.solo and rank == 0) std.log.info("glm: prompt passes of {d} rows, {d} while another stream decodes", .{ fw.solo_rows, fw.prefill_rows });
         if (world > 1 and rank == 0) std.log.info("glm: a prompt chunk's exchanges in {d} row pieces", .{o.settings.pieces});
         if (pair) e.pair = try prompt_pair.Pair.init(d, &e.w, &e.bp, &e.pieces, o.capacity);
         errdefer if (e.pair) |*p| p.deinit();
-        e.bd = try fw.Buffers.init(d, &e.w, fw.window_rows, false, o.capacity);
+        e.bd = try fw.Buffers.init(d, &e.w, e.m.tools().lane, fw.window_rows, false, o.capacity);
         errdefer e.bd.deinit();
-        e.bm = try fw.Buffers.init(d, &e.w, fw.window_rows, false, o.capacity);
+        e.bm = try fw.Buffers.init(d, &e.w, e.m.tools().lane, fw.window_rows, false, o.capacity);
         errdefer e.bm.deinit();
-        if (o.mtp) e.bs = try fw.Buffers.initShared(d, &e.w, shared_rows, o.capacity);
+        if (o.mtp) e.bs = try fw.Buffers.initShared(d, &e.w, e.m.tools().lane, shared_rows, o.capacity);
         errdefer if (e.bs) |*b| b.deinit();
         e.pairs = try cuda.DeviceBuffer.alloc(d, pair_bytes * world * pick_rows);
         errdefer e.pairs.free();

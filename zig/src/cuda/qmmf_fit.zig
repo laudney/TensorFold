@@ -53,7 +53,8 @@ pub fn shape(l: q.Lane, m: usize, w: q.Weight) Shape {
 /// The most partials any call of 1 .. `rows` rows needs (a split's need is not monotonic in rows): size scratch so.
 pub fn maxPartBytes(l: q.Lane, w: q.Weight, rows: usize) usize {
     var most: usize = 0;
-    for (1..@min(rows, q.fused_rows - 1) + 1) |m| most = @max(most, l.partBytes(m, w));
+    const top: usize = @min(rows, q.fused_rows - 1); // typed: @min narrows to the comptime operand's u8
+    for (1..top + 1) |m| most = @max(most, l.partBytes(m, w));
     return most;
 }
 

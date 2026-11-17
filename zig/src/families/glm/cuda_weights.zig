@@ -574,6 +574,7 @@ test "the loader narrows a float32 to bf16 only when bf16 holds it, unlike FP4-L
 test {
     _ = @import("cuda_formats.zig");
     _ = @import("cuda_proj.zig");
+    _ = @import("cuda_lane_parts.zig");
     _ = @import("cuda_fp8pb.zig");
     _ = @import("cuda_mxfp8.zig");
     _ = @import("cuda_load_ahead.zig");

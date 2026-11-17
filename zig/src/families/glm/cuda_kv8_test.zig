@@ -356,10 +356,10 @@ test "GLM shared window: its KDA projection rows have their own room, even when 
     const rows = @import("cuda_engine.zig").shared_rows;
     try t.expectEqual(rows, state.window_rows);
     const row_bytes = @import("cuda_kda_block.zig").rowWidth(w.share.kda.len()) * 2;
-    var shared = try state.Buffers.initShared(&d, &w, rows, 8256);
+    var shared = try state.Buffers.initShared(&d, &w, null, rows, 8256);
     defer shared.deinit();
     try t.expect(shared.kda.ka - shared.kproj >= rows * row_bytes);
-    var window = try state.Buffers.init(&d, &w, rows, false, 8256);
+    var window = try state.Buffers.init(&d, &w, null, rows, false, 8256);
     defer window.deinit();
     try t.expect(window.kda.ka - window.kproj < rows * row_bytes); // a lone window's rows stay in the state
 }

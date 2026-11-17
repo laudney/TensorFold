@@ -197,18 +197,18 @@ pub const Buffers = struct {
     mx: u64, // bf16 [rows][dims]: its stream
     part: u64, // fp32 [rows][dims]: this rank's partial rows a split exchange sends from
 
-    pub fn init(d: *const cuda.Driver, w: *const weights.Weights, rows: usize, prefill: bool, capacity: usize) !Buffers {
-        return make(d, w, rows, prefill, capacity, rows, prefill, null);
+    pub fn init(d: *const cuda.Driver, w: *const weights.Weights, lane: ?*const cuda.qmmf.Lane, rows: usize, prefill: bool, capacity: usize) !Buffers {
+        return make(d, w, lane, rows, prefill, capacity, rows, prefill, null);
     }
 
     /// A shared window's scratch: `rows` rows of several streams, each one's attention and KDA chain on `window_rows`.
-    pub fn initShared(d: *const cuda.Driver, w: *const weights.Weights, rows: usize, capacity: usize) !Buffers {
-        return make(d, w, rows, false, capacity, window_rows, true, null);
+    pub fn initShared(d: *const cuda.Driver, w: *const weights.Weights, lane: ?*const cuda.qmmf.Lane, rows: usize, capacity: usize) !Buffers {
+        return make(d, w, lane, rows, false, capacity, window_rows, true, null);
     }
 
     /// A paired step's second chunk: its own rows across sites and streams, and `of`'s scratch for one site's work.
     pub fn initTwin(d: *const cuda.Driver, w: *const weights.Weights, of: *const Buffers, capacity: usize) !Buffers {
-        return make(d, w, of.rows, of.prefill, capacity, of.rows, of.prefill, of);
+        return make(d, w, null, of.rows, of.prefill, capacity, of.rows, of.prefill, of); // mm_part is `of`'s
     }
 
     /// The fields a twin holds apart, by their index in make's sizes (make reads the fields from these indexes too).
@@ -223,7 +223,7 @@ pub const Buffers = struct {
     }
 
     /// `seg`: a stream's most attention rows; `own_proj`: its KDA projection rows are here, not in the state.
-    fn make(d: *const cuda.Driver, w: *const weights.Weights, rows: usize, prefill: bool, capacity: usize, seg: usize, own_proj: bool, twin: ?*const Buffers) !Buffers {
+    fn make(d: *const cuda.Driver, w: *const weights.Weights, lane: ?*const cuda.qmmf.Lane, rows: usize, prefill: bool, capacity: usize, seg: usize, own_proj: bool, twin: ?*const Buffers) !Buffers {
         const c = &w.config;
         const s = &w.share;
         const D: usize = c.hidden;
@@ -247,6 +247,7 @@ pub const Buffers = struct {
         var mm: usize = 4;
         // windows under rows_from rows keep their K slices apart (a prompt's tail chunk on the prefill buffers too)
         for (b16Shapes(w)) |sh_| mm = @max(mm, b16.partBytes(@min(rows, b16.rows_from - 1), sh_[0], sh_[1]));
+        mm = @max(mm, @import("cuda_lane_parts.zig").bytes(lane, w, rows)); // the lane's splits that meet through its reduce
         const x3: [4]usize = if (c.exl3) exl3.scratchBytes(rows, D, ew, prefill, w.exl3_shx) else @splat(4);
         var split = false; // a KDA stack in two parts moves each part's rows through one more buffer
         for (w.layers) |l| split = split or (l.mixer == .kda and l.mixer.kda.proj == .split);
