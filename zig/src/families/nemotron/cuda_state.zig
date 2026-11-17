@@ -293,7 +293,7 @@ pub const Buffers = struct {
     table: u64, // the bound sequence's page table (0: contiguous KV planes)
     shared: u64, // the shared expert's fixed plans: one initialized plan per row count
     pocket: u64, // the pocket's activations, fp32 [rows, pocket_width]
-    lane_part: u64, // the lane matmul's fp32 slice partials on a card without clusters (rows short of fusing)
+    lane_part: u64, // the lane matmul's fp32 slice partials where its clusters do not fit (rows short of fusing)
     lat: u64, // a latent MoE's rows in the latent width (bf16)
     comb: u64, // its routed pairs' latent sum a row (bf16)
     sact: u64, // its shared expert's activations (bf16)

@@ -242,7 +242,7 @@ pub const Kernels = struct {
     prompt: cuda.nvfp4.Prompt,
     pack: cuda.modelopt.Packer,
     embed: cuda.embed_rows.EmbedRows,
-    /// Slice partials where no cluster meets them (before sm_90): the most any projection takes below fused_rows.
+    /// Slice partials where no cluster meets them: the most any projection takes below fused_rows.
     part: ?DeviceBuffer = null,
     experts: ?cuda.experts.Nvfp4Experts = null, // a MoE's routed experts (cuda_modelopt_experts.zig)
 

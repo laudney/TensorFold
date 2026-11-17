@@ -59,8 +59,9 @@ fn share(r: *Rig, lane: *const cuda.qmmf.Lane, label: []const u8, parts: []const
         out.free();
     }
     try out.fill8(0xff, r.s.handle);
-    if (lane.partBytes(m, w) != 0) return error.SlicePartialsNotHeld;
-    try lane.matmulOut(r.s, dx, z.k, m, w, out.ptr, .f32, 0);
+    var part = try cuda.DeviceBuffer.alloc(r.gpu.d, @max(16, lane.partBytes(m, w))); // a split past its clusters' fit
+    defer part.free();
+    try lane.matmulOut(r.s, dx, z.k, m, w, out.ptr, .f32, part.ptr);
     try r.close(label, out.ptr, true, want, tol);
 }
 
