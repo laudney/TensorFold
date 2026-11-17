@@ -16,8 +16,11 @@ pub const Driver = struct {
     api: abi.Api,
     /// cuFuncGetName (CUDA 12.3+; optional: an older driver opens without it): a failed launch names its kernel
     func_name: ?FuncGetName = null,
+    /// cuOccupancyMaxActiveClusters (CUDA 11.8+; optional): how many clusters of one launch are resident at once
+    max_clusters: ?MaxActiveClusters = null,
 
     pub const FuncGetName = *const fn (*?[*:0]const u8, abi.Function) callconv(.c) abi.Result;
+    pub const MaxActiveClusters = *const fn (*c_int, abi.Function, *const abi.LaunchConfig) callconv(.c) abi.Result;
 
     pub fn open() Error!Driver {
         return openPath(platform.cuda_driver);
@@ -35,7 +38,7 @@ pub const Driver = struct {
                 return error.MissingSymbol;
             };
         }
-        const d: Driver = .{ .lib = lib, .api = api, .func_name = lib.lookup(FuncGetName, "cuFuncGetName") };
+        const d: Driver = .{ .lib = lib, .api = api, .func_name = lib.lookup(FuncGetName, "cuFuncGetName"), .max_clusters = lib.lookup(MaxActiveClusters, "cuOccupancyMaxActiveClusters") };
         try d.check(api.cuInit(0), "cuInit");
         var buf: [256]u8 = undefined;
         if (d.tooOld(&buf)) |why| {
