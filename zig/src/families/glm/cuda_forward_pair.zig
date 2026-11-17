@@ -7,7 +7,12 @@ const Forward = fw.Forward;
 const Pieces = fw.Pieces;
 const Site = fw.Forward.Site;
 const room = fw.Forward.room;
+const moe = @import("cuda_moe.zig");
+
 const share = fw.Forward.share;
+
+/// A joint ffn site's source for b's fill: each rank's a buffers (MoE scratch, normed), b's rows from `off`.
+const Src = struct { ranks: []const fw.Rank, off: usize };
 
 /// Two consecutive prompt chunks of one sequence (`b` a view of `a`'s at its end), each on `pieced`'s kernels and bits.
 pub fn pairBody(a: *const Forward, b: *const Forward, ra: usize, rb: usize) !void {
@@ -37,7 +42,16 @@ pub fn pairBody(a: *const Forward, b: *const Forward, ra: usize, rb: usize) !voi
             for (f.ranks) |r| try f.mixer(r, r.w.layers[j], li, di, R, @min(latent.chunksFor(r.st.pos + R), r.b.nch), null);
             try exchangeGlue(f, f.pieces.?, j, .mixer, cuts[i][0..n[i]]);
         }
-        for (two, rows, 0..) |f, R, i| {
+        if (l.ffn == .moe and a.joint and a.ranks[0].b.rows >= ra + rb) {
+            // one routed-expert pass over both chunks reads each expert's weights once; each fill takes its own rows
+            const D = a.ranks[0].w.config.hidden;
+            try awaitShared(a, a.pieces.?, n[0]);
+            try awaitShared(a, b.pieces.?, n[1]);
+            for (a.ranks, b.ranks) |r0, r1| try a.copy(a.stream, r0.b.normed + ra * D * 2, r1.b.normed, rb * D * 2);
+            for (a.ranks) |r| try moe.body(a.moeKernels(), a.stream, r.w.layers[j].ffn.moe, r.b.moe, r.b.normed, D, ra + rb, true);
+            try exchangeGlueFrom(a, a.pieces.?, j, .ffn, cuts[0][0..n[0]], null);
+            try exchangeGlueFrom(b, b.pieces.?, j, .ffn, cuts[1][0..n[1]], .{ .ranks = a.ranks, .off = ra });
+        } else for (two, rows, 0..) |f, R, i| {
             try awaitShared(f, f.pieces.?, n[i]);
             for (f.ranks) |r| try f.ffn(r, r.w.layers[j], R, null);
             try exchangeGlue(f, f.pieces.?, j, .ffn, cuts[i][0..n[i]]);
@@ -55,6 +69,11 @@ pub fn pairBody(a: *const Forward, b: *const Forward, ra: usize, rb: usize) !voi
 
 /// A paired site: each piece filled on the main stream, then on the side stream its exchange, glue and (split) sharing.
 fn exchangeGlue(f: *const Forward, p: *const Pieces, j: usize, site: Site, cut: []const [2]usize) !void {
+    return exchangeGlueFrom(f, p, j, site, cut, null);
+}
+
+/// exchangeGlue with a joint ffn site's fill from `src` (one pass on a's rows) instead of f's own buffers.
+fn exchangeGlueFrom(f: *const Forward, p: *const Pieces, j: usize, site: Site, cut: []const [2]usize, src: ?Src) !void {
     const D = f.ranks[0].w.config.hidden;
     const world = f.ranks[0].w.share.world;
     const last = site == .ffn and j + 1 == f.ranks[0].w.layers.len;
@@ -64,7 +83,13 @@ fn exchangeGlue(f: *const Forward, p: *const Pieces, j: usize, site: Site, cut: 
         const lo = piece[0];
         const n = piece[1] - lo;
         const split = f.splits(n);
-        for (f.ranks) |r| try f.fillRows(r, r.w.layers[j], site, lo, piece[1], if (split) r.b.part + lo * D * 4 else room(r, lo) + r.w.share.rank * n * D * 4);
+        for (f.ranks, 0..) |r, k| {
+            const out = if (split) r.b.part + lo * D * 4 else room(r, lo) + r.w.share.rank * n * D * 4;
+            if (src) |s| {
+                const sb = s.ranks[k].b;
+                try moe.fill(f.moeKernels(), f.stream, r.w.layers[j].ffn.moe, sb.moe, sb.normed, D, s.off + lo, s.off + piece[1], true, out);
+            } else try f.fillRows(r, r.w.layers[j], site, lo, piece[1], out);
+        }
         try p.filled[q].record(f.stream);
         try p.side.wait(p.filled[q]);
         try pieces.partials(f, p, lo, n, split);

@@ -19,6 +19,7 @@ pub const Settings = struct {
     pieces: u32 = 3, // TF_GLM_OVERLAP_PIECES: a prompt chunk's exchanges in this many row pieces (1: whole); unset, 8 under solo on the wire.
     solo: bool = false, // TF_GLM_CHUNK_SOLO: 4096 (prompt buffers for two chunks a pass, while no stream decodes) or 2048
     pair: bool = true, // TF_GLM_PROMPT_PAIR: 1 (while no stream decodes, a prompt step takes two chunks, each one's exchanges under the other's sites) or 0
+    joint: bool = true, // TF_GLM_PAIR_JOINT: 1 (a paired step's MoE sites route both chunks' rows through one expert pass) or 0
     index_split: u32 = 2048, // TF_GLM_INDEX_SPLIT: from this position on, rank 0 splits a prompt chunk's indexer rows (0: never)
     heat: ?heat.Bands = null, // TF_HEAT_HIGH and TF_HEAT_LOW (upstream's names): a prompt chunk waits on every rank's hottest zone
     layers: u32 = 0, // TF_GLM_LAYERS: the first this many layers only, a thin model for one-GPU checks (0: all)
@@ -101,6 +102,12 @@ pub const Settings = struct {
         if (get("TF_GLM_PROMPT_PAIR")) |v| {
             if (std.mem.eql(u8, v, "1")) s.pair = true else if (std.mem.eql(u8, v, "0")) s.pair = false else {
                 problem.* = "TF_GLM_PROMPT_PAIR: 0 or 1";
+                return error.BadSetting;
+            }
+        }
+        if (get("TF_GLM_PAIR_JOINT")) |v| {
+            if (std.mem.eql(u8, v, "1")) s.joint = true else if (std.mem.eql(u8, v, "0")) s.joint = false else {
+                problem.* = "TF_GLM_PAIR_JOINT: 0 or 1";
                 return error.BadSetting;
             }
         }
@@ -219,7 +226,7 @@ pub const Fingerprint = extern struct {
     kda_pad: u32 = 0, // TF_GLM_KDA_PAD: every rank's KDA input rows carry one width
     kv_live_half: u32 = 0, // TF_GLM_KV_LIVE_HALF: every rank keeps the live KDA half alone (1) or the head whole (0)
     pieces: u32,
-    pair: u32, // TF_GLM_PROMPT_PAIR: rank 0's paired steps need the second chunk's buffers on every rank
+    pair: u32, // TF_GLM_PROMPT_PAIR (and 2: TF_GLM_PAIR_JOINT): every rank needs the second chunk's buffers, and joint the wider first
     layers: u32, // TF_GLM_LAYERS (0: all)
     mtp: u32, // 1: the MTP head loads and runs (drafts on); 2: and DFlash2 (--drafter), whose rounds gather
     vision: u32 = 0, // --vision's image tokens (0: off): rank 0 sends image rows every rank must hold
@@ -299,7 +306,7 @@ pub const Fingerprint = extern struct {
             .kda_pad = @intFromBool(s.kda_pad),
             .kv_live_half = @intFromBool(s.kv_live_half),
             .pieces = s.pieces,
-            .pair = @intFromBool(s.pair),
+            .pair = if (!s.pair) 0 else if (s.joint) 2 else 1,
             .layers = s.layers,
             .mtp = @intFromBool(mtp),
             .roce_multi = @intFromBool(s.roce_multi),
@@ -462,7 +469,7 @@ fn explain(f: Fingerprint.Field) []const u8 {
         .kda_pad => "TF_GLM_KDA_PAD",
         .kv_live_half => "TF_GLM_KV_LIVE_HALF",
         .pieces => "TF_GLM_OVERLAP_PIECES",
-        .pair => "TF_GLM_PROMPT_PAIR",
+        .pair => "TF_GLM_PROMPT_PAIR or TF_GLM_PAIR_JOINT",
         .layers => "TF_GLM_LAYERS",
         .mtp => "--no-drafts given to some ranks and not others",
         .vision => "--vision (or its image tokens) given to some ranks and not others",
