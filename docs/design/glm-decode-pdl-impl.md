@@ -117,6 +117,25 @@ Launch side (same commit):
   decode 128 tokens 3 reps, cold 8k / 32k prompts), `TF_GLM_PDL=0` on the head, `suite-ex.sh` exactness on both,
   the dependency test and contract outputs, tools, `SHA256SUMS`.
 
+## Found on hardware: the non-coherent load hoist
+
+- Symptom: with the head's kernels dependent, greedy 16-token replies after a cold 8k prompt varied (8 distinct in
+  30 requests); the first token never varied, short-prompt decode stayed exact. Both the DSA indexer's scores kernel
+  and its selectors had to launch dependent; either plain gave 30/30.
+- Cause: nvcc emits `ld.global.nc` for `const T* __restrict__` inputs; ptxas then schedules those loads
+  (`LDG.E.CONSTANT`) above `griddepcontrol.wait` (`ACQBULK`), which the PTX rules allow, as `.nc` data must stay
+  read-only for the kernel's whole life. Twelve kernels did: `dsel_scan`, `dsel_merge`, `index_pools`,
+  `dsa_tokens`, seven `kvh_*`, `df_attn`.
+- Rule: an input a predecessor writes is never `const __restrict__`; outputs keep `__restrict__`.
+- Guard: `tools/pdl_early_loads.py`, run by `zig build check-pdl-loads` with `-Dnvcc`, fails any sm_90+ function in
+  the GLM images or qmmf that reads global memory before its first wait, or that has no wait and is not a plain-only
+  entry; only the weight-first bodies may start async weight copies first. `test-glm-pdl-scan` also checks the
+  order of glm_mm's and qmmf's weight-first prologues in the source.
+- Measured with 30-sample (then 60-sample) 16-token checks; 15-sample checks missed the race twice.
+- Receipt confounder: the GLM load times its two expert forms once a binary and keeps the faster; the head's binary
+  kept `classic` and main's `factored`, which moved plain decode by about 3%. The receipt A/B runs both on `factored`
+  (the head's kept flag set to main's), so only the change under test differs.
+
 ## Checks for every commit
 
 `zig build` (native, the GB10 kernels), `zig build test` for the touched host tests, `test-glm-pdl-scan`,
