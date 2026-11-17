@@ -333,6 +333,7 @@ fn finishRank(a: OpenArgs) !Loaded {
     errdefer if (own.group.multi) |m| m.deinit(m.ctx);
     own.e.installGroup(&own.group);
     own.link = try follow.Link.init(gpa, ctx.d, &own.group.lib, own.group.comm, own.e.stream, try linkCapacity(cap, o.vision));
+    try own.link.useRoce(&own.group); // the step header with the decode gathers, not NCCL
     errdefer own.link.deinit();
     try @import("cuda_prompt_logprobs.zig").prepare(own.e);
     own.e.snap_setup = .{ .ptr = own, .run = readySnapshots };

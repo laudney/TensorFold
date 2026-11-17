@@ -55,6 +55,8 @@ pub const Link = struct {
     gpa: std.mem.Allocator,
     wait: bool, // TF_GLM_LINK_WAIT=1: every step uploaded and waited for, as before the put
     asleep: bool = false, // rank 0: the other ranks sleep on their lines (cuda.tp_watch) until its next step
+    group: ?*const cuda.tp_group.Group = null, // the step header by the decode gathers' RoCE path (useRoce)
+    all: ?cuda.DeviceBuffer = null, // that gather's world x first_bytes, rank 0's slot first
 
     pub fn init(gpa: std.mem.Allocator, d: *const cuda.Driver, lib: *const cuda.nccl.Library, comm: cuda.nccl.Comm, stream: cuda.Stream, asked_ids: usize) !Link {
         const max_ids = @max(asked_ids, prompt_wire.words);
@@ -67,7 +69,17 @@ pub const Link = struct {
         return .{ .d = d, .lib = lib, .comm = comm, .stream = stream, .buf = buf, .ids = try gpa.alloc(u32, max_ids), .gpa = gpa, .wait = wait };
     }
 
+    /// The header's first_bytes go by `g`'s RoCE gather (NCCL delivers it ~400 us late) when every rank carries them.
+    pub fn useRoce(l: *Link, g: *const cuda.tp_group.Group) !void {
+        const fast = g.fast orelse return;
+        if (!fast.fits(first_bytes)) return;
+        l.all = try cuda.DeviceBuffer.alloc(l.d, g.world * first_bytes);
+        l.group = g;
+        if (g.rank == 0) std.log.info("glm: step headers by RoCE writes", .{});
+    }
+
     pub fn deinit(l: *Link) void {
+        if (l.all) |*a| a.free();
         l.gpa.free(l.ids);
         l.buf.free();
     }
@@ -78,6 +90,7 @@ pub const Link = struct {
     }
 
     fn post(l: *Link, bytes: usize) !void {
+        if (bytes == first_bytes) if (l.group) |g| return g.allGather(l.stream, l.buf.ptr, l.all.?.ptr, first_bytes);
         try l.lib.check(l.lib.api.ncclBroadcast(l.buf.ptr, l.buf.ptr, bytes, .u8, 0, l.comm, l.stream.handle), "ncclBroadcast");
     }
 
@@ -118,7 +131,7 @@ pub const Link = struct {
     pub fn receive(l: *Link) !struct { h: Header, ids: []const u32 } {
         try l.bcast(first_bytes);
         var first: [first_bytes]u8 align(8) = undefined;
-        try l.buf.download(0, &first);
+        if (l.all) |a| try a.download(0, &first) else try l.buf.download(0, &first);
         const h = std.mem.bytesAsValue(Header, first[0..@sizeOf(Header)]).*;
         if (h.n > l.ids.len) return error.TooManyIds;
         if (h.n > inline_ids) {
