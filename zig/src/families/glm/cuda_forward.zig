@@ -66,6 +66,7 @@ pub const Modules = struct {
         }
         m.lane = try cuda.qmmf.Lane.load(d, @intCast(try ctx.attribute(.compute_capability_major)));
         m.lane.pdl = @import("cuda_pdl.zig").on();
+        if (std.c.getenv("TF_GLM_MX_PROMPT") != null) try m.lane.loadPromptMx(d); // EXPERIMENT
         errdefer m.lane.unload();
         m.prompt = try cuda.nvfp4.Prompt.load(d);
         errdefer m.prompt.unload();

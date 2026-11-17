@@ -8,7 +8,7 @@
 #ifdef TF_QMMF_STRIDED
     static_assert(BN == 64 || BN == 32, "a block reads one 64-column tile of words and scales, or its half");
 #else
-    static_assert(BN == 64 || BN == 32 || (MODE == BF16 && BN == 128), "packed column tiles");
+    static_assert(BN == 64 || BN == 32 || ((MODE == BF16 || MODE == MXFP8) && BN == 128), "packed column tiles");
 #endif
     extern __shared__ __align__(128) unsigned char buf[];
     const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
@@ -98,9 +98,13 @@
             cp16(pw + c * 16, w + (static_cast<size_t>(n0 / 64 + t) * KG + g) * TILE_BYTES + off * 16);
         }
         if constexpr (T::S > 0) {
+            // each packed 64-column tile's scales, side by side (a 128-column tile reads two)
+            constexpr int TS = T::S / (BN / 64);
             unsigned char* ps = pw + T::W;
-            for (int c = tid; c < T::S / 16; c += T::THREADS)
-                cp16(ps + c * 16, bs + (static_cast<size_t>(n0 / 64) * KG + g) * T::S + c * 16);
+            for (int c = tid; c < T::S / 16; c += T::THREADS) {
+                const int t = c / (TS / 16), off = c % (TS / 16);
+                cp16(ps + c * 16, bs + (static_cast<size_t>(n0 / 64 + t) * KG + g) * TS + off * 16);
+            }
         }
         }
     };

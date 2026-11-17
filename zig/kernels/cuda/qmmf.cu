@@ -213,6 +213,16 @@ BF16_PROMPT(false, true)
 BF16_PROMPT(true, false)
 BF16_PROMPT(true, true)
 #undef BF16_PROMPT
+// MXFP8 prompt tiles: the 64x64 instances' K16 pairs and per-32 block scales, two packed tiles a block.
+#define MXFP8_PROMPT(F32, FUSE) \
+    template __global__ void qmmf_kernel<MXFP8, 128, 128, 2, 4, 3, F32, false, FUSE>( \
+        const __nv_bfloat16* __restrict__, const unsigned char* __restrict__, const uint8_t* __restrict__, float, \
+        void* __restrict__, float* __restrict__, int, int, int, int, int, int, int);
+MXFP8_PROMPT(false, false)
+MXFP8_PROMPT(false, true)
+MXFP8_PROMPT(true, false)
+MXFP8_PROMPT(true, true)
+#undef MXFP8_PROMPT
 
 // Unsplit K32 needs no inter-slice partial buffer or bulk-copy barrier storage.
 struct PromptK32Tile {
